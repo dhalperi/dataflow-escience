@@ -245,4 +245,7 @@ public final class SeaFlowIO {
       return currentRecord;
     }
   }
+
+  /* Disable construction. */
+  private SeaFlowIO() {}
 }
