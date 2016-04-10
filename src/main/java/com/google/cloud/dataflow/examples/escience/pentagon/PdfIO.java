@@ -22,8 +22,6 @@ import org.slf4j.LoggerFactory;
 
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
@@ -37,11 +35,15 @@ import javax.imageio.ImageIO;
  * Created by dhalperi on 4/10/16.
  */
 public class PdfIO {
+
   private static final Logger LOG = LoggerFactory.getLogger(PdfIO.class);
 
   @DefaultCoder(AvroCoder.class)
   public static class PdfPage {
-    public PdfPage() {}
+
+    public PdfPage() {
+    }
+
     public static PdfPage of(String filename, int page, String text) {
       PdfPage ret = new PdfPage();
       ret.filename = filename;
@@ -49,12 +51,14 @@ public class PdfIO {
       ret.text = text;
       return ret;
     }
+
     String filename;
     int page;
     String text;
   }
 
   public static class Read extends PTransform<PBegin, PCollection<PdfPage>> {
+
     private final String filePattern;
 
     private Read(String filePattern) {
@@ -73,7 +77,8 @@ public class PdfIO {
 
   @VisibleForTesting
   static class PdfSource extends FileBasedSource<PdfPage> {
-    private static final long BUNDLE_SIZE_BYTES = 100L*1024L; // 100KiB
+
+    private static final long BUNDLE_SIZE_BYTES = 100L * 1024L; // 100KiB
 
     private PdfSource(String filePattern) {
       super(filePattern, BUNDLE_SIZE_BYTES);
@@ -105,6 +110,7 @@ public class PdfIO {
   }
 
   private static class PdfReader extends FileBasedReader<PdfPage> {
+
     private PDDocument document;
     private PDFRenderer renderer;
     private Map<COSObjectKey, Long> xrefTable;
@@ -125,28 +131,34 @@ public class PdfIO {
         seekable.position(0L);
       }
 
-      File tempFile = File.createTempFile("temp",".pdf");
-      LOG.info("About to copy input file {} to local file {}", source.getFileOrPatternSpec(), tempFile.getCanonicalPath());
-      FileOutputStream out = new FileOutputStream(tempFile);
-      long copied = ByteStreams.copy(Channels.newInputStream(channel), out);
-      out.close();
-      LOG.info("Copied {} bytes from input file {} to local file {}", copied, source.getFileOrPatternSpec(), tempFile.getCanonicalPath());
+      // Read document into memory.
+      try (ByteArrayOutputStream stream = new ByteArrayOutputStream()) {
+        long copied = ByteStreams.copy(Channels.newInputStream(channel), stream);
+        stream.flush();
+        LOG.info("Copied {} bytes from input file {} to in-memory array", copied,
+            source.getFileOrPatternSpec());
+        document = PDDocument.load(stream.toByteArray());
+      }
+      LOG.info("PDF Document {} has {} pages", source.getFileOrPatternSpec(),
+          document.getNumberOfPages());
 
-      document = PDDocument.load(tempFile);
       renderer = new PDFRenderer(document);
       xrefTable = document.getDocument().getXrefTable();
-      LOG.info("PDF Document {} has {} pages", source.getFileOrPatternSpec(), document.getNumberOfPages());
 
       currentPage = 0;
       currentPageOffset = -1;
-      while (currentPage < document.getNumberOfPages() && currentPageOffset < source.getStartOffset()) {
-        COSObjectKey pageKey = document.getDocument().getKey(document.getPage(currentPage).getCOSObject());
+      while (currentPage < document.getNumberOfPages() && currentPageOffset < source
+          .getStartOffset()) {
+        COSObjectKey pageKey = document.getDocument()
+            .getKey(document.getPage(currentPage).getCOSObject());
         currentPageOffset = xrefTable.get(pageKey);
         if (currentPageOffset >= source.getStartOffset()) {
-          LOG.info("Starting at page {} [page offset {}, start offset {}]", currentPage, currentPageOffset, source.getStartOffset());
+          LOG.info("Starting at page {} [page offset {}, start offset {}]", currentPage,
+              currentPageOffset, source.getStartOffset());
           break;
         }
-        LOG.debug("Skipping page {} because its offset {} is less than the start offset {}", currentPage, currentPageOffset, source.getStartOffset());
+        LOG.debug("Skipping page {} [page offset {} < start offset {}]", currentPage,
+            currentPageOffset, source.getStartOffset());
         ++currentPage;
       }
     }
@@ -167,7 +179,8 @@ public class PdfIO {
       // Compute the current record.
       PDPage page = document.getPage(currentPage);
       COSObjectKey pageKey = document.getDocument().getKey(page.getCOSObject());
-      currentRecord = PdfPage.of(getCurrentSource().getFileOrPatternSpec(), currentPage, pageToText(currentPage));
+      currentRecord = PdfPage
+          .of(getCurrentSource().getFileOrPatternSpec(), currentPage, getPageText(currentPage));
       currentPageOffset = xrefTable.get(pageKey);
       LOG.info("Page {} has text {}", currentPage, currentRecord.text);
 
@@ -201,14 +214,14 @@ public class PdfIO {
       return currentRecord;
     }
 
-    private String pageToText(int page) throws IOException {
+    private String getPageText(int page) throws IOException {
       PDFTextStripper stripper = new PDFTextStripper();
       stripper.setStartPage(page + 1);
       stripper.setEndPage(page + 1);
       return stripper.getText(document);
     }
 
-    private byte[] pageToImage(int page) throws IOException {
+    private byte[] getPageImage(int page) throws IOException {
       BufferedImage image = renderer.renderImageWithDPI(page, 300);
       try (ByteArrayOutputStream stream = new ByteArrayOutputStream()) {
         ImageIO.write(image, "jpg", stream);
