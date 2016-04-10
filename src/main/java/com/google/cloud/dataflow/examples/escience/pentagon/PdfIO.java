@@ -1,26 +1,22 @@
 package com.google.cloud.dataflow.examples.escience.pentagon;
 
-import com.google.cloud.dataflow.sdk.coders.ByteArrayCoder;
+import com.google.cloud.dataflow.sdk.coders.AvroCoder;
 import com.google.cloud.dataflow.sdk.coders.Coder;
-import com.google.cloud.dataflow.sdk.coders.KvCoder;
-import com.google.cloud.dataflow.sdk.coders.StringUtf8Coder;
-import com.google.cloud.dataflow.sdk.coders.VarIntCoder;
-import com.google.cloud.dataflow.sdk.coders.VarLongCoder;
+import com.google.cloud.dataflow.sdk.coders.DefaultCoder;
 import com.google.cloud.dataflow.sdk.io.FileBasedSource;
 import com.google.cloud.dataflow.sdk.io.FileBasedSource.FileBasedReader;
 import com.google.cloud.dataflow.sdk.options.PipelineOptions;
 import com.google.cloud.dataflow.sdk.transforms.PTransform;
-import com.google.cloud.dataflow.sdk.values.KV;
 import com.google.cloud.dataflow.sdk.values.PBegin;
 import com.google.cloud.dataflow.sdk.values.PCollection;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.io.ByteStreams;
 
 import org.apache.pdfbox.cos.COSObjectKey;
-import org.apache.pdfbox.io.RandomAccessFile;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.rendering.PDFRenderer;
+import org.apache.pdfbox.text.PDFTextStripper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,11 +25,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
 import java.nio.channels.SeekableByteChannel;
-import java.nio.file.Files;
 import java.util.Map;
 import java.util.NoSuchElementException;
 
@@ -45,7 +39,22 @@ import javax.imageio.ImageIO;
 public class PdfIO {
   private static final Logger LOG = LoggerFactory.getLogger(PdfIO.class);
 
-  public static class Read extends PTransform<PBegin, PCollection<KV<KV<String, Long>, byte[]>>> {
+  @DefaultCoder(AvroCoder.class)
+  public static class PdfPage {
+    public PdfPage() {}
+    public static PdfPage of(String filename, int page, String text) {
+      PdfPage ret = new PdfPage();
+      ret.filename = filename;
+      ret.page = page;
+      ret.text = text;
+      return ret;
+    }
+    String filename;
+    int page;
+    String text;
+  }
+
+  public static class Read extends PTransform<PBegin, PCollection<PdfPage>> {
     private final String filePattern;
 
     private Read(String filePattern) {
@@ -63,7 +72,7 @@ public class PdfIO {
   }
 
   @VisibleForTesting
-  static class PdfSource extends FileBasedSource<KV<KV<String, Integer>, byte[]>> {
+  static class PdfSource extends FileBasedSource<PdfPage> {
     private static final long BUNDLE_SIZE_BYTES = 100L*1024L; // 100KiB
 
     private PdfSource(String filePattern) {
@@ -90,19 +99,19 @@ public class PdfIO {
     }
 
     @Override
-    public Coder<KV<KV<String, Integer>, byte[]>> getDefaultOutputCoder() {
-      return KvCoder.of(KvCoder.of(StringUtf8Coder.of(), VarIntCoder.of()), ByteArrayCoder.of());
+    public Coder<PdfPage> getDefaultOutputCoder() {
+      return AvroCoder.of(PdfPage.class);
     }
   }
 
-  private static class PdfReader extends FileBasedReader<KV<KV<String, Integer>, byte[]>> {
+  private static class PdfReader extends FileBasedReader<PdfPage> {
     private PDDocument document;
     private PDFRenderer renderer;
     private Map<COSObjectKey, Long> xrefTable;
 
     private int currentPage;
     private long currentPageOffset;
-    private KV<KV<String, Integer>, byte[]> currentRecord;
+    private PdfPage currentRecord;
 
     public PdfReader(PdfSource source) {
       super(source);
@@ -158,8 +167,9 @@ public class PdfIO {
       // Compute the current record.
       PDPage page = document.getPage(currentPage);
       COSObjectKey pageKey = document.getDocument().getKey(page.getCOSObject());
-      currentRecord = KV.of(KV.of(getCurrentSource().getFileOrPatternSpec(), currentPage), pageToImage(currentPage));
+      currentRecord = PdfPage.of(getCurrentSource().getFileOrPatternSpec(), currentPage, pageToText(currentPage));
       currentPageOffset = xrefTable.get(pageKey);
+      LOG.info("Page {} has text {}", currentPage, currentRecord.text);
 
       // Advance to next page.
       ++currentPage;
@@ -184,11 +194,18 @@ public class PdfIO {
     }
 
     @Override
-    public KV<KV<String, Integer>, byte[]> getCurrent() throws NoSuchElementException {
+    public PdfPage getCurrent() throws NoSuchElementException {
       if (currentRecord == null) {
         throw new NoSuchElementException();
       }
       return currentRecord;
+    }
+
+    private String pageToText(int page) throws IOException {
+      PDFTextStripper stripper = new PDFTextStripper();
+      stripper.setStartPage(page + 1);
+      stripper.setEndPage(page + 1);
+      return stripper.getText(document);
     }
 
     private byte[] pageToImage(int page) throws IOException {
