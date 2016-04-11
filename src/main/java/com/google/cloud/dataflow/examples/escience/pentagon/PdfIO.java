@@ -73,6 +73,11 @@ public class PdfIO {
     PdfSource getSource() {
       return new PdfSource(filePattern);
     }
+
+    @Override
+    public PCollection<PdfPage> apply(PBegin input) {
+      return input.getPipeline().apply(com.google.cloud.dataflow.sdk.io.Read.from(getSource()));
+    }
   }
 
   @VisibleForTesting
@@ -182,7 +187,6 @@ public class PdfIO {
       currentRecord = PdfPage
           .of(getCurrentSource().getFileOrPatternSpec(), currentPage, getPageText(currentPage));
       currentPageOffset = xrefTable.get(pageKey);
-      LOG.info("Page {} has text {}", currentPage, currentRecord.text);
 
       // Advance to next page.
       ++currentPage;
