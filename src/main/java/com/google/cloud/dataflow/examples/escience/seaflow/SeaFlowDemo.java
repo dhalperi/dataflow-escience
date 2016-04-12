@@ -38,9 +38,6 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Created by dhalperi on 4/9/16.
- */
 public class SeaFlowDemo {
 
   @DefaultCoder(AvroCoder.class)
@@ -150,8 +147,8 @@ public class SeaFlowDemo {
     PCollection<KV<String, Record>> records = p
         .apply("Read CSV", Read.from(options.getInput()))
         .apply("Parse CSV to SeaFlow", ParDo.of(new ParseCsv()))
-        .apply("Key by Cruise", MapElements.via((Record r) -> KV.of(r.cruise, r)).withOutputType(
-            new TypeDescriptor<KV<String, Record>>() {}));
+        .apply("Key by Cruise", MapElements.via((Record r) -> KV.of(r.cruise, r))
+            .withOutputType(new TypeDescriptor<KV<String, Record>>() {}));
 
     records.apply("Count per cruise", Count.perKey())
         .apply("Stringify",
@@ -167,7 +164,7 @@ public class SeaFlowDemo {
         windowedRecords.apply("Windowed count", Count.perKey());
 
     PCollectionView<Map<String, Long>> percentileView =
-        windowedCounts.apply("Compute 80th percentile", new ComputeInterestingQuantile(5));
+        windowedCounts.apply("Compute 80th percentile", new ComputeInterestingQuantile(6));
 
     windowedCounts.apply("Filter interesting windows",
         ParDo.of(new DoFn<KV<String, Long>, KV<String, Long>>() {

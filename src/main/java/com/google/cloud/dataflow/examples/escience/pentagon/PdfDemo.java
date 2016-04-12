@@ -19,12 +19,11 @@ import com.google.cloud.dataflow.sdk.values.PCollection;
 import com.google.common.collect.ImmutableList;
 
 /**
- * Created by dhalperi on 4/9/16.
+ * Extracts words from a collection of PDF documents and loads them into Google BigQuery.
  */
 public class PdfDemo {
 
   private static class ExtractWordsFn extends DoFn<PdfPage, KV<PdfPage, String>> {
-
     @Override
     public void processElement(ProcessContext c) throws Exception {
       PdfPage page = c.element();
@@ -46,7 +45,6 @@ public class PdfDemo {
       ));
 
   private static class TableRowFn extends DoFn<KV<PdfPage, String>, TableRow> {
-
     @Override
     public void processElement(ProcessContext c) throws Exception {
       PdfPage page = c.element().getKey();
@@ -60,7 +58,6 @@ public class PdfDemo {
   }
 
   interface Options extends PipelineOptions {
-
     @Validation.Required
     @Description("A pattern matching a collection of PDFs")
     String getInputFiles();
@@ -74,12 +71,10 @@ public class PdfDemo {
 
   public static void main(String[] args) {
     Options options = PipelineOptionsFactory.fromArgs(args).as(Options.class);
-    Pipeline p = Pipeline.create(options);
+    Pipeline pipeline = Pipeline.create(options);
 
-    PCollection<PdfPage> records = p
-        .apply("Extract pages from PDFs", PdfIO.Read.from(options.getInputFiles()));
-
-    records
+    pipeline
+        .apply("Extract pages from PDFs", PdfIO.Read.from(options.getInputFiles()))
         .apply("Extract words from page", ParDo.of(new ExtractWordsFn()))
         .apply("Convert to TableRow", ParDo.of(new TableRowFn()))
         .apply("Write to BQ", BigQueryIO.Write.to(options.getOutputTable())
@@ -87,6 +82,6 @@ public class PdfDemo {
             .withCreateDisposition(CreateDisposition.CREATE_IF_NEEDED)
             .withWriteDisposition(WriteDisposition.WRITE_TRUNCATE));
 
-    p.run();
+    pipeline.run();
   }
 }
